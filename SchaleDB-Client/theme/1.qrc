@@ -1,0 +1,8 @@
+<RCC>
+  <qresource prefix="add">
+    <file>assets/用户替代图标_1753013468.svg</file>
+    <file>assets/用户删除_1753013447.svg</file>
+    <file>assets/用户添加图标_1753013415.svg</file>
+  </qresource>
+  <qresource prefix="新前缀"/>
+</RCC>

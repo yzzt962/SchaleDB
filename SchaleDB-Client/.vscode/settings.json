@@ -1,0 +1,11 @@
+{
+    "background.fullscreen": {
+        "images": [],
+        "opacity": 0.1,
+        "size": "cover",
+        "position": "center",
+        "interval": 0,
+        "random": false
+    },
+    "background.enabled": false
+}

@@ -1,0 +1,17 @@
+# build.spec
+a = Analysis(
+    ['main.py'],
+    pathex=[], 
+    binaries=[],
+    datas=[
+        ('*.ini', '.'),       # 包含所有配置文件
+        ('images/*', 'images') # 包含图片资源
+    ],
+    hiddenimports=['PySide6'],
+    hookspath=[],
+    noarchive=False
+    console=False
+)
+
+pyz = PYZ(a.pure)
+exe = EXE(pyz, a.scripts, a.binaries, a.datas, name='delete', upx=True)
