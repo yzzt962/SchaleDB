@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QApplication, QGridLayout, QHe
     QPushButton, QSizePolicy, QStatusBar, QTableWidget,
     QTableWidgetItem, QToolBar, QWidget, QMessageBox)
 from PySide6.QtNetwork import *
+
 # 假设 shared.py 存在并包含IP信息
 try:
     from shared_manager import shared
@@ -100,7 +101,6 @@ class Ui_MainWindow(object):
         self.tableWidget.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.gridLayout.addWidget(self.tableWidget, 5, 0, 1, 4)
 
-        # 更多界面元素...
         self.pushButton_2 = QPushButton(self.centralwidget)
         self.pushButton_2.setObjectName(u"pushButton_2")
         self.pushButton_2.setFont(font)
@@ -208,6 +208,7 @@ class StudentInfoEditor(QMainWindow):
         # 初始化进程对象
         self.process = QProcess(self)
         self.process.finished.connect(self.on_process_finished)
+        self.process.errorOccurred.connect(self.on_process_error)
         
         # 网络管理器
         self.network_manager = QNetworkAccessManager()
@@ -230,10 +231,12 @@ class StudentInfoEditor(QMainWindow):
         # 初始加载数据
         self.fetch_student_data()
         self.start_auto_refresh()
-        self.safety_timer = QTimer()
-        self.safety_timer.setSingleShot(True)
-        self.safety_timer.timeout.connect(lambda: self.setEnabled(True))
-        self.safety_timer.start(10000)
+        
+        # 安全恢复机制
+        self.recovery_timer = QTimer()
+        self.recovery_timer.setSingleShot(True)
+        self.recovery_timer.timeout.connect(self.force_recovery)
+    
     def center_window(self):
         """居中显示窗口"""
         frame = self.frameGeometry()
@@ -261,6 +264,7 @@ class StudentInfoEditor(QMainWindow):
         url = QUrl(f"http://{shared.ip}:8000/list")
         request = QNetworkRequest(url)
         self.network_manager.get(request)
+    
     def handle_response(self, reply):
         try:
             self.ui.tableWidget.setEnabled(True)
@@ -277,7 +281,7 @@ class StudentInfoEditor(QMainWindow):
                 self.show_error_message(f"网络请求失败({error}): {error_msg}")
                 return
         
-        # 检查HTTP状态码
+            # 检查HTTP状态码
             status_code = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute)
             if status_code != 200:
                 self.show_error_message(f"服务器返回错误状态码: {status_code}")
@@ -296,6 +300,9 @@ class StudentInfoEditor(QMainWindow):
                 self.show_error_message(f"无法解析服务器响应: {data}")
         except Exception as e:
             self.show_error_message(f"处理响应时出现异常: {str(e)}")
+        finally:
+            reply.deleteLater()
+    
     def populate_table(self, students):
         """填充表格数据"""
         try:
@@ -381,45 +388,89 @@ class StudentInfoEditor(QMainWindow):
             self.run_exe(exe_path)
     
     def run_exe(self, exe_path):
-        """运行外部程序"""
         try:
-            self.setEnabled(False) 
-            if sys.platform == "win32":
-                success = self.process.startDetached(exe_path)
-                if not success:
-                    raise RuntimeError("无法启动程序")
-            else:
-                self.process.start(exe_path)
+            # 禁用界面并启动恢复计时器
+            self.setEnabled(False)
+            self.recovery_timer.start(10000)  # 10秒后强制恢复            
+            # 启动进程
+            self.process.start(exe_path)
+                
         except Exception as e:
+            # 出错时立即恢复界面
             self.setEnabled(True)
+            self.recovery_timer.stop()
             QMessageBox.critical(self, "错误", f"程序启动失败: {str(e)}")
-    
-    def on_process_finished(self):
+        
+    def on_process_finished(self, exit_code, exit_status):
         """外部程序完成回调"""
         self.setEnabled(True)
-        # 外部程序完成后刷新数据
+        self.recovery_timer.stop()
+        
+            # 外部程序完成后刷新数据
         self.fetch_student_data()
-    
+        
+    def on_process_error(self, error):
+        """进程错误处理"""
+        self.setEnabled(True)
+        self.recovery_timer.stop()
+            
+        error_msg = {
+            QProcess.FailedToStart: "程序启动失败",
+            QProcess.Crashed: "程序崩溃",
+            QProcess.Timedout: "程序超时",
+            QProcess.WriteError: "写入错误",
+            QProcess.ReadError: "读取错误",
+            QProcess.UnknownError: "未知错误"
+        }.get(error, "进程错误")
+            
+        QMessageBox.critical(self, "错误", error_msg)
+        
+    def force_recovery(self):
+        """强制恢复界面"""
+        if not self.isEnabled():
+            self.setEnabled(True)
+            if self.process.state() != QProcess.NotRunning:
+                self.process.kill()
+            QMessageBox.warning(self, "提示", "操作超时，已恢复界面控制")
+        
     def closeEvent(self, event):
         """窗口关闭事件"""
         self.stop_auto_refresh()
+        if self.process.state() != QProcess.NotRunning:
+            self.process.kill()
         super().closeEvent(event)
+
+    def check_server_connection():
+        """检查服务器连接"""
+        try:
+            import socket
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(2)  # 2秒超时
+            result = sock.connect_ex((shared.ip, 8000))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
-    try:
-        import socket
-        sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        sock.settimeout(2)  # 2秒超时
-        result = sock.connect_ex((shared.ip, 8000))
-        sock.close()
-        if result != 0:
-            QMessageBox.critical(None, "连接失败", f"无法连接到服务器 {shared.ip}:8000")
+    
+    # 检查服务器连接
+    if not StudentInfoEditor.check_server_connection():
+        msg = QMessageBox()
+        msg.setIcon(QMessageBox.Critical)
+        msg.setText(f"无法连接到服务器 {shared.ip}:8000")
+        msg.setInformativeText("请检查服务器是否运行或IP设置是否正确")
+        msg.setWindowTitle("连接失败")
+        msg.setStandardButtons(QMessageBox.Retry | QMessageBox.Abort)    
+        ret = msg.exec()
+        if ret == QMessageBox.Abort:
             sys.exit(1)
-    except Exception as e:
-        QMessageBox.critical(None, "连接错误", f"检查服务器连接时出错: {str(e)}")
-        sys.exit(1)
+            # 如果选择重试，再次检查
+        if not check_server_connection():
+            QMessageBox.critical(None, "连接失败", "仍然无法连接到服务器")
+            sys.exit(1)
+        
     window = StudentInfoEditor()
     window.show()
     sys.exit(app.exec())
-    
